@@ -102,10 +102,31 @@
       letter-spacing: -0.03em;
     }
 
-    .value {
-      color: var(--accent-dark);
+    .value-input {
+      font-family: inherit;
+      font-size: inherit;
       font-weight: 700;
       font-variant-numeric: tabular-nums;
+      color: var(--accent-dark);
+      background: transparent;
+      border: none;
+      border-bottom: 1px solid transparent;
+      text-align: right;
+      width: 12ch;
+      padding: 0;
+      outline: none;
+      transition: border-color 0.15s;
+      -moz-appearance: textfield;
+    }
+
+    .value-input::-webkit-outer-spin-button,
+    .value-input::-webkit-inner-spin-button {
+      -webkit-appearance: none;
+      margin: 0;
+    }
+
+    .value-input:focus {
+      border-bottom-color: var(--accent);
     }
 
     input[type="range"] {
@@ -330,19 +351,19 @@
         <div class="control">
           <div class="control-header">
             <label for="jobVolume">Job volume</label>
-            <span class="value" id="jobVolumeValue">100,000 jobs / month</span>
+            <input id="jobVolumeNumber" class="value-input" type="number" min="1000" max="100000000" step="1000" value="100000" aria-label="Job volume per month">
           </div>
           <input id="jobVolume" type="range" min="1000" max="100000000" step="1000" value="100000">
           <div class="scale" aria-hidden="true">
-            <span>1k</span>
-            <span>100m</span>
+            <span>1k jobs / mo</span>
+            <span>100m jobs / mo</span>
           </div>
         </div>
 
         <div class="control">
           <div class="control-header">
             <label for="jobDuration">Average job duration</label>
-            <span class="value" id="jobDurationValue">5 seconds</span>
+            <input id="jobDurationNumber" class="value-input" type="number" min="1" max="300" step="1" value="5" aria-label="Average job duration in seconds">
           </div>
           <input id="jobDuration" type="range" min="1" max="300" step="1" value="5">
           <div class="scale" aria-hidden="true">
@@ -354,7 +375,7 @@
         <div class="control">
           <div class="control-header">
             <label for="workerCount">Autoscaled workers</label>
-            <span class="value" id="workerCountValue">Up to 10 workers</span>
+            <input id="workerCountNumber" class="value-input" type="number" min="1" max="25" step="1" value="10" aria-label="Maximum autoscaled worker count">
           </div>
           <input id="workerCount" type="range" min="1" max="25" step="1" value="10">
           <div class="scale" aria-hidden="true">
@@ -363,11 +384,19 @@
           </div>
         </div>
 
-        <div class="assumptions" aria-label="Static pricing assumptions">
-          <div class="assumption">
-            <span>Polling interval</span>
-            <strong>10 seconds</strong>
+        <div class="control">
+          <div class="control-header">
+            <label for="pollingInterval">Polling interval</label>
+            <input id="pollingIntervalNumber" class="value-input" type="number" min="1" max="60" step="1" value="10" aria-label="Queue polling interval in seconds">
           </div>
+          <input id="pollingInterval" type="range" min="1" max="60" step="1" value="10">
+          <div class="scale" aria-hidden="true">
+            <span>1 sec</span>
+            <span>60 sec</span>
+          </div>
+        </div>
+
+        <div class="assumptions" aria-label="Static pricing assumptions">
           <div class="assumption">
             <span>Compute size</span>
             <strong>256MB instance</strong>
@@ -423,16 +452,17 @@
   <script>
     const WORKER_SECOND_RATE = 0.00000152;
     const QUEUE_OPERATION_RATE = 1 / 1000000;
-    const POLLING_INTERVAL_SECONDS = 10;
     const SCALE_DOWN_SECONDS = 60;
     const SECONDS_PER_MONTH = 30 * 24 * 60 * 60;
 
     const jobVolume = document.querySelector('#jobVolume');
     const jobDuration = document.querySelector('#jobDuration');
     const workerCount = document.querySelector('#workerCount');
-    const jobVolumeValue = document.querySelector('#jobVolumeValue');
-    const jobDurationValue = document.querySelector('#jobDurationValue');
-    const workerCountValue = document.querySelector('#workerCountValue');
+    const pollingInterval = document.querySelector('#pollingInterval');
+    const jobVolumeNumber = document.querySelector('#jobVolumeNumber');
+    const jobDurationNumber = document.querySelector('#jobDurationNumber');
+    const workerCountNumber = document.querySelector('#workerCountNumber');
+    const pollingIntervalNumber = document.querySelector('#pollingIntervalNumber');
     const monthlyCost = document.querySelector('#monthlyCost');
     const computeCost = document.querySelector('#computeCost');
     const operationCost = document.querySelector('#operationCost');
@@ -448,10 +478,35 @@
       maximumFractionDigits: 2,
     });
 
+    function clamp(value, min, max) {
+      return Math.min(Math.max(value, min), max);
+    }
+
+    function syncPair(slider, numberInput) {
+      slider.addEventListener('input', () => {
+        numberInput.value = slider.value;
+        updateCalculator();
+      });
+
+      numberInput.addEventListener('input', () => {
+        const raw = Number(numberInput.value);
+        if (!Number.isFinite(raw)) return;
+        const step = Number(slider.step);
+        const val = clamp(Math.round(raw / step) * step, Number(slider.min), Number(slider.max));
+        slider.value = val;
+        updateCalculator();
+      });
+
+      numberInput.addEventListener('blur', () => {
+        numberInput.value = slider.value;
+      });
+    }
+
     function updateCalculator() {
       const volume = Number(jobVolume.value);
       const duration = Number(jobDuration.value);
       const workers = Number(workerCount.value);
+      const pollingIntervalSeconds = Number(pollingInterval.value);
       const requestedRuntimeSeconds = volume * duration;
       const monthlyCapacitySeconds = workers * SECONDS_PER_MONTH;
       const runtimeSeconds = Math.min(requestedRuntimeSeconds, monthlyCapacitySeconds);
@@ -462,14 +517,11 @@
       const compute = totalSeconds * WORKER_SECOND_RATE;
       const elapsedSeconds = runtimeSeconds / workers;
       const pollingSeconds = elapsedSeconds + (queueClears ? SCALE_DOWN_SECONDS : 0);
-      const polls = Math.ceil(pollingSeconds / POLLING_INTERVAL_SECONDS) * workers;
+      const polls = Math.ceil(pollingSeconds / pollingIntervalSeconds) * workers;
       const operations = volume + (completedJobs * 2) + polls;
       const queueCost = operations * QUEUE_OPERATION_RATE;
       const cost = compute + queueCost;
 
-      jobVolumeValue.textContent = `${numberFormatter.format(volume)} jobs / month`;
-      jobDurationValue.textContent = `${numberFormatter.format(duration)} ${duration === 1 ? 'second' : 'seconds'}`;
-      workerCountValue.textContent = `Up to ${numberFormatter.format(workers)} ${workers === 1 ? 'worker' : 'workers'}`;
       monthlyCost.textContent = currencyFormatter.format(cost);
       computeCost.textContent = currencyFormatter.format(compute);
       operationCost.textContent = currencyFormatter.format(queueCost);
@@ -478,9 +530,10 @@
       queueOperations.textContent = `${numberFormatter.format(operations)} ops`;
     }
 
-    jobVolume.addEventListener('input', updateCalculator);
-    jobDuration.addEventListener('input', updateCalculator);
-    workerCount.addEventListener('input', updateCalculator);
+    syncPair(jobVolume, jobVolumeNumber);
+    syncPair(jobDuration, jobDurationNumber);
+    syncPair(workerCount, workerCountNumber);
+    syncPair(pollingInterval, pollingIntervalNumber);
     updateCalculator();
   </script>
 </body>
