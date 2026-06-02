@@ -351,7 +351,7 @@
         <div class="control">
           <div class="control-header">
             <label for="jobVolume">Job volume</label>
-            <input id="jobVolumeNumber" class="value-input" type="number" min="1000" max="100000000" step="1000" value="100000" aria-label="Job volume per month">
+            <input id="jobVolumeNumber" class="value-input" type="text" inputmode="numeric" pattern="[0-9,]*" min="1000" max="100000000" step="1000" value="100000" aria-label="Job volume per month">
           </div>
           <input id="jobVolume" type="range" min="1000" max="100000000" step="1000" value="100000">
           <div class="scale" aria-hidden="true">
@@ -482,14 +482,26 @@
       return Math.min(Math.max(value, min), max);
     }
 
-    function syncPair(slider, numberInput) {
+    function parseFormattedNumber(value) {
+      const normalized = String(value).replace(/,/g, '').trim();
+
+      return normalized === '' ? NaN : Number(normalized);
+    }
+
+    function syncPair(slider, numberInput, formatValue = (value) => value, parseValue = Number) {
+      numberInput.value = formatValue(slider.value);
+
       slider.addEventListener('input', () => {
-        numberInput.value = slider.value;
+        numberInput.value = document.activeElement === numberInput ? slider.value : formatValue(slider.value);
         updateCalculator();
       });
 
+      numberInput.addEventListener('focus', () => {
+        numberInput.value = slider.value;
+      });
+
       numberInput.addEventListener('input', () => {
-        const raw = Number(numberInput.value);
+        const raw = parseValue(numberInput.value);
         if (!Number.isFinite(raw)) return;
         const step = Number(slider.step);
         const val = clamp(Math.round(raw / step) * step, Number(slider.min), Number(slider.max));
@@ -498,7 +510,7 @@
       });
 
       numberInput.addEventListener('blur', () => {
-        numberInput.value = slider.value;
+        numberInput.value = formatValue(slider.value);
       });
     }
 
@@ -530,7 +542,7 @@
       queueOperations.textContent = `${numberFormatter.format(operations)} ops`;
     }
 
-    syncPair(jobVolume, jobVolumeNumber);
+    syncPair(jobVolume, jobVolumeNumber, (value) => numberFormatter.format(value), parseFormattedNumber);
     syncPair(jobDuration, jobDurationNumber);
     syncPair(workerCount, workerCountNumber);
     syncPair(pollingInterval, pollingIntervalNumber);
